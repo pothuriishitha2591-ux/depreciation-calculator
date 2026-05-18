@@ -1,0 +1,18 @@
+:root{--bg:#f7fafc;--card:#fff;--accent:#1363d7}
+body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:0;background:var(--bg);color:#0f172a}
+.wrap{max-width:980px;margin:28px auto;padding:20px}
+header h1{margin:0;font-size:24px;color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:20px}
+.card{background:var(--card);padding:14px;border-radius:12px;text-decoration:none;color:var(--accent);font-weight:600;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(2,6,23,0.06)}
+.card:hover{transform:translateY(-4px);transition:all .15s ease}
+form.calcform{margin-top:12px;margin-bottom:12px}
+.grid-2{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.form-row{display:flex;align-items:center;gap:12px;margin-top:8px}
+label{display:block;font-size:14px}
+input,select{padding:8px 10px;border-radius:8px;border:1px solid #e6eef8;font-size:14px;width:100%}
+button{background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;border:0;cursor:pointer}
+.errors{background:#fff4f4;border:1px solid #ffd2d2;color:#7a1f1f;padding:10px;border-radius:8px;display:none;margin-top:10px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{padding:8px;border-bottom:1px solid #eef2ff;text-align:left}
+.muted{color:#6b7280}
+@media (max-width:900px){.grid{grid-template-columns:1fr};.grid-2{grid-template-columns:1fr}}

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Depreciation Comparison & Worth Analysis</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <a href="index.html">← Home</a>
+    <h1>Comparison of All Depreciation Methods (₹)</h1>
+
+    <form id="compareForm" class="calcform">
+      <div class="grid-2">
+        <label>Asset Cost (₹): <input id="cost" type="number" step="0.01" required value="10000"></label>
+        <label>Salvage Value (₹): <input id="salvage" type="number" step="0.01" value="1000"></label>
+        <label>Useful Life (years): <input id="life" type="number" step="1" min="1" value="5"></label>
+      </div>
+      <button type="submit">Compare All Methods</button>
+    </form>
+
+    <div id="result" class="card" style="display:none"></div>
+    <div id="worth" class="card" style="display:none"></div>
+    <div id="chartWrap" class="card" style="display:none">
+      <canvas id="chart" height="120"></canvas>
+    </div>
+  </div>
+
+  <script>
+  async function postJSON(url, payload){
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    return res.json();
+  }
+
+  const apiEndpoints = {
+    straight: '/api/straight-line',
+    declining: '/api/declining-balance',
+    syd: '/api/syd',
+    units: '/api/units-production'
+  };
+
+  document.getElementById('compareForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const cost = Number(document.getElementById('cost').value);
+    const salvage = Number(document.getElementById('salvage').value);
+    const life = Number(document.getElementById('life').value);
+    const payload = { cost, salvage, life, round: 0 };
+
+    const resultDiv = document.getElementById('result');
+    const worthDiv = document.getElementById('worth');
+    resultDiv.innerHTML = "<p>Calculating...</p>";
+    resultDiv.style.display = "block";
+
+    try {
+      const [straight, declining, syd, units] = await Promise.all([
+        postJSON(apiEndpoints.straight, payload),
+        postJSON(apiEndpoints.declining, payload),
+        postJSON(apiEndpoints.syd, payload),
+        postJSON(apiEndpoints.units, {...payload, total:100, units:[20,20,20,20,20]})
+      ]);
+
+      const methods = [
+        {name:"Straight-Line", data: straight.rows},
+        {name:"Declining Balance", data: declining.rows},
+        {name:"Sum-of-Years-Digits", data: syd.rows},
+        {name:"Units of Production", data: units.rows}
+      ];
+
+      let html = `<table><thead><tr><th>Method</th><th>Total Depreciation</th><th>Final Book Value</th><th>First-Year Depreciation</th><th>Type</th></tr></thead><tbody>`;
+      methods.forEach(m=>{
+        const total = m.data.reduce((a,b)=>a+(b.depreciation||0),0);
+        const finalValue = m.data[m.data.length-1].ending;
+        const firstDep = m.data[0].depreciation;
+        const type = (m.name==="Straight-Line")?"Constant":(m.name==="Units of Production")?"Usage-Based":"Accelerated";
+        html += `<tr><td>${m.name}</td><td>₹${total.toLocaleString('en-IN')}</td><td>₹${finalValue.toLocaleString('en-IN')}</td><td>₹${firstDep.toLocaleString('en-IN')}</td><td>${type}</td></tr>`;
+      });
+      html += "</tbody></table>";
+      resultDiv.innerHTML = html;
+
+      // Chart Comparison
+      const ctx = document.getElementById('chart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: methods.map(m=>m.name),
+          datasets: [{
+            label: 'First-Year Depreciation (₹)',
+            data: methods.map(m=>m.data[0].depreciation),
+          }]
+        },
+        options: { scales: { y: { beginAtZero:true } } }
+      });
+      document.getElementById('chartWrap').style.display = 'block';
+
+      // Worth analysis logic
+      const avgFinalValue = methods.reduce((a,m)=>a+m.data[m.data.length-1].ending,0)/methods.length;
+      const depreciationRate = (cost - avgFinalValue)/cost * 100;
+      let worthMsg = "";
+
+      if (depreciationRate < 40) {
+        worthMsg = "💰 This project retains strong asset value. The investment appears financially worthwhile.";
+      } else if (depreciationRate < 70) {
+        worthMsg = "📊 The project shows moderate depreciation. Worth considering based on operational benefits.";
+      } else {
+        worthMsg = "⚠️ High depreciation rate — the asset loses value quickly. Reconsider if resale or longevity is critical.";
+      }
+
+      worthDiv.innerHTML = `<h2>Investment Worth Analysis</h2><p>${worthMsg}</p>`;
+      worthDiv.style.display = "block";
+
+    } catch(err) {
+      resultDiv.innerHTML = `<p style="color:red">Error comparing methods. Please try again.</p>`;
+    }
+  });
+  </script>
+</body>
+</html>

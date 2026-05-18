@@ -1,0 +1,208 @@
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <title>Units of Production (₹)</title>
+      <link rel="stylesheet" href="style.css" />
+      <!-- Chart.js CDN --> 
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    </head>
+    <body>
+      <div class="wrap">
+        <a href="index.html">← Home</a>
+        <h1>Units of Production (₹)</h1>
+        <form id="f" class="calcform">
+          <div class="grid-2">
+            <label>Asset cost (₹): <input id="cost" type="number" step="0.01" required value="25000"></label>
+<label>Salvage value (₹): <input id="salvage" type="number" step="0.01" value="0"></label>
+<label>Depreciation years: <input id="life" type="number" step="1" min="1" value="5"></label>
+<label>Estimated total production (units): <input id="total" type="number" step="1" value="100000000"></label>
+<label>Annual units produced (comma separated): <input id="units" type="text" placeholder="e.g. 4000000,3500000,3000000,2500000,1000000" value="4000000,3500000,3000000,2500000,1000000"></label>
+
+          </div>
+          <div class="form-row">
+            <label>Round to: 
+              <select id="round">
+                <option value="0">No rounding</option>
+                <option value="1">Nearest ₹1</option>
+                <option value="0.01">Nearest ₹0.01</option>
+              </select>
+            </label>
+            <label style="margin-left:12px">Partial first year? 
+              <select id="partial">
+                <option value="1">No (full year)</option>
+                <option value="0.5">Half year</option>
+                <option value="0.25">Quarter year</option>
+                <option value="0">Zero</option>
+                <option value="custom">Custom...</option>
+              </select>
+              <input id="partialCustom" type="number" step="0.01" min="0" max="1" style="width:90px;display:none;margin-left:8px" placeholder="0.75">
+            </label>
+            <button type="submit">Calculate</button>
+            <button id="export" type="button">Export CSV</button>
+          </div>
+        </form>
+
+        <div id="errors" class="errors" aria-live="polite"></div>
+
+        <div id="summary" class="card" style="display:none"></div>
+
+        <div id="chartWrap" style="display:none" class="card">
+          <canvas id="chart" height="120"></canvas>
+        </div>
+
+        <div id="result" class="card" style="display:none"></div>
+      </div>
+
+      <script>
+      const apiEndpoint = '/api/units-production';
+      async function postJSON(url, payload){
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(()=>({errors:['Server error']}));
+    throw body;
+  }
+  return res.json();
+}
+
+function formatINR(v){
+  return '₹ ' + Number(v).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function showErrors(list){
+  const el = document.getElementById('errors');
+  if (!list || list.length===0){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML = '<ul>' + list.map(x=>`<li>${x}</li>`).join('') + '</ul>';
+}
+
+function renderTable(rows){
+  let html = '<table><thead><tr><th>Year</th><th>Beginning Book Value</th><th>Depreciation %</th><th>Depreciation Amount</th><th>Accumulated Depreciation</th><th>Ending Book Value</th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    html += `<tr><td>${r.year}</td><td>${formatINR(r.beginning)}</td><td>${r.depreciationPercent.toFixed(2)}%</td><td>${formatINR(r.depreciation)}</td><td>${formatINR(r.accumulated)}</td><td>${formatINR(r.ending)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function downloadCSV(rows, filename='depreciation.csv'){
+  let csv = 'Year,Beginning Book Value,Depreciation %,Depreciation Amount,Accumulated Depreciation,Ending Book Value\n';
+  rows.forEach(r=>{
+    csv += `${r.year},${r.beginning},${r.depreciationPercent},${r.depreciation},${r.accumulated},${r.ending}\n`;
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+function setupFormHandlers(extraPrepare){
+  const form = document.getElementById('f');
+  const partialSelect = document.getElementById('partial');
+  const partialCustom = document.getElementById('partialCustom');
+  partialSelect.addEventListener('change', ()=>{
+    if (partialSelect.value === 'custom'){ partialCustom.style.display='inline-block'; } else { partialCustom.style.display='none'; }
+  });
+
+  let chartInstance = null;
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    showErrors([]);
+    document.getElementById('result').style.display='none';
+    document.getElementById('summary').style.display='none';
+    document.getElementById('chartWrap').style.display='none';
+
+    // gather base inputs
+    const cost = Number(document.getElementById('cost').value || 0);
+    const salvage = Number(document.getElementById('salvage').value || 0);
+    const life = Number(document.getElementById('life').value || 0);
+    const round = Number(document.getElementById('round').value || 0);
+    let partial = document.getElementById('partial').value;
+    if (partial === 'custom') partial = Number(document.getElementById('partialCustom').value || 0);
+    partial = Number(partial);
+
+    const payload = { cost, salvage, life, round, partial };
+
+    try {
+      extraPrepare(payload); // allow page-specific additions
+      const resp = await postJSON(apiEndpoint, payload);
+      const rows = resp.rows || [];
+      if (!rows || rows.length===0) { showErrors(['No results']); return; }
+
+      // summary
+      const totalDep = rows.reduce((a,b)=>a + (Number(b.depreciation)||0), 0);
+     const costVal = Number(document.getElementById('cost').value || 0);
+const salvageVal = Number(document.getElementById('salvage').value || 0);
+const totalVal = Number(document.getElementById('total').value || 0);
+const depPerUnit = totalVal > 0 ? (costVal - salvageVal) / totalVal : 0;
+
+let summary = `Total depreciation (sum shown years): ${formatINR(totalDep)} · Final ending book value: ${formatINR(rows[rows.length-1].ending)}`;
+summary += `<br>Depreciation per unit = (Cost − Salvage) / Total estimated units = ${formatINR(depPerUnit)} per unit.`;
+
+document.getElementById('summary').style.display='block';
+document.getElementById('summary').innerHTML = '<strong>Summary</strong><div>' + summary + '</div>';
+
+      document.getElementById('summary').style.display='block';
+      document.getElementById('summary').innerHTML = '<strong>Summary</strong><div>' + summary + '</div>';
+
+      // result table
+      document.getElementById('result').style.display='block';
+      document.getElementById('result').innerHTML = renderTable(rows);
+
+      // chart
+      const labels = rows.map(r => 'Year ' + r.year);
+      const bookValues = rows.map(r => r.beginning);
+      const depAmounts = rows.map(r => r.depreciation);
+
+      const ctx = document.getElementById('chart').getContext('2d');
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            { label: 'Beginning Book Value', data: bookValues, yAxisID:'y', backgroundColor: 'rgba(54, 162, 235, 0.7)' },
+            { label: 'Depreciation Amount', data: depAmounts, yAxisID:'y', backgroundColor: 'rgba(75, 192, 192, 0.7)' }
+          ]
+        },
+        options: {
+          responsive:true,
+          interaction:{mode:'index', intersect:false},
+          plugins:{legend:{position:'top'}},
+          scales:{
+            y:{beginAtZero:true, ticks:{callback: function(value){ return '₹ ' + value.toLocaleString('en-IN'); }}}
+          }
+        }
+      });
+      document.getElementById('chartWrap').style.display='block';
+
+      // attach export button
+      document.getElementById('export').onclick = ()=> downloadCSV(rows);
+
+    } catch (err) {
+      // err may be {errors: [...]}
+      if (err && err.errors) showErrors(err.errors);
+      else if (err && err.error) showErrors([err.error]);
+      else showErrors(['Unexpected server error.']);
+    }
+  });
+}
+
+
+function extraPrepare(payload){ const units = (document.getElementById('units').value || '').split(',').map(x=>Number(x.trim())||0); payload.units = units; payload.total = Number(document.getElementById('total').value||0); }
+setupFormHandlers((payload) => {
+  const units = (document.getElementById('units').value || '')
+    .split(',')
+    .map(x => Number(x.trim()) || 0);
+  payload.units = units;
+  payload.total = Number(document.getElementById('total').value || 0);
+});
+
+      </script>
+    </body>
+    </html>
